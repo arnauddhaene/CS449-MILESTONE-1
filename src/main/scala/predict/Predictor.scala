@@ -1,5 +1,8 @@
 package predict
 
+import stats.Analyzer
+import stats.Rating
+
 import org.rogach.scallop._
 import org.json4s.jackson.Serialization
 import org.apache.spark.rdd.RDD
@@ -15,7 +18,7 @@ class Conf(arguments: Seq[String]) extends ScallopConf(arguments) {
   verify()
 }
 
-case class Rating(user: Int, item: Int, rating: Double)
+case class BaselineRating(user : Int, item : Int, rating: Double, userAvg: Double, itemAvg: Double)
 
 object Predictor extends App {
   // Remove these lines if encountering/debugging Spark
@@ -49,25 +52,13 @@ object Predictor extends App {
   // **************
   //  MY CODE HERE
   // **************
+
+  // Q3.1.4
   
   val globalAverageRating = train.map(rating => rating.rating).mean
-  val globalMae = test.map(r => scala.math.abs(r.rating - globalAverageRating))
+  val globalMae = test
+    .map(r => scala.math.abs(r.rating - globalAverageRating))
     .reduce(_ + _) / test.count.toDouble
-
-  /**
-    * Computes the average rating per item or user.
-    *
-    * @param data the RDD containing Ratings.
-    * @param onKey the key to average on: one of {"user","item"}.
-    * 
-    * @return a RDD of Tuple2[Int, Double] with the ID of {"user","item"} and the rating.
-    */
-  def averageRatingPer(data : RDD[Rating], onKey : String) : RDD[Tuple2[Int, Double]] = {
-    return data.map(r => (if(onKey == "item") r.item else r.user, r.rating))
-      .mapValues(r => (r, 1))
-      .reduceByKey { case ((sumL, countL), (sumR, countR)) => (sumL + sumR, countL + countR) }
-      .mapValues { case (sum, count) => 1.0 * sum / count }
-  }
   
   /**
     * Computes the MAE (Mean Average Error) using the average prediction method.
@@ -78,32 +69,102 @@ object Predictor extends App {
     * 
     * @return the MAE of the predictions on the test.
     */
-  def MaeByAveragePer(train : RDD[Rating], test : RDD[Rating], onKey : String) : Double = {
+    def maeByAveragePer(train : RDD[Rating], test : RDD[Rating], onKey : String) : Double = {
 
     // Fetch average ratings
-    val averageRating = averageRatingPer(train, onKey)
+    val averageRating = Analyzer.averageRatingPer(train, onKey)
 
     // Calculate global average rating
     val globalAverageRating = train.map(r => r.rating).mean
 
-    // Find items or users in test missing in train and give them global average rating
-    val testWithMissing = test.map(r => if (onKey == "item") r.item else r.user)
-      .subtract(averageRating.map(r => r._1))
-      .map(r => (r, globalAverageRating))
-      .union(averageRating)
+    val mae = test
+      .map(r => (if(onKey == "item") r.item else r.user, r.rating))
+      .leftOuterJoin(averageRating)
+      .map { case (k, (v, w)) => scala.math.abs(v - w.getOrElse(globalAverageRating)) }
 
-    val mae = test.map(r => (if(onKey == "item") r.item else r.user, r.rating))
-      .join(testWithMissing)
-      .map { case (k, (v, w)) => scala.math.abs(v - w) }
-
+    // Verify that all test ratings were compared to our predictions before averaging
     assert(mae.count() == test.count(), s"RDD sizes do not match when computing per $onKey MAE.")
 
     return mae.reduce(_ + _) / mae.count.toDouble
 
   }
   
-  val perUserMae = MaeByAveragePer(train, test, "user")
-  val perItemMae = MaeByAveragePer(train, test, "item")
+  print("perUserMae \t")
+  val perUserMae = spark.time(maeByAveragePer(train, test, "user"))
+
+  print("perItemMae \t")
+  val perItemMae = spark.time(maeByAveragePer(train, test, "item"))
+
+  def scale(x : Double, userAvg : Double) : Double = {
+    x match {
+      case a if x > userAvg => 5 - userAvg
+      case a if x < userAvg => userAvg - 1
+      case userAvg => 1
+    }
+  }
+  
+  def maeByBaseline(train : RDD[Rating], test : RDD[Rating]) : Double = {
+    val userAverageRating = Analyzer.averageRatingPer(train, "user")
+    
+    val normalizedDeviations = train
+      .map(r => (r.user, r))
+      .join(userAverageRating)
+      .map { case (k, (v, w)) => Rating(k, v.item, (v.rating - w) / scale(v.rating, w))}
+    
+    val itemGlobalAverageDeviation = Analyzer.averageRatingPer(normalizedDeviations, "item")
+    
+    val baselineErrors = test
+      .map(r => (r.user, BaselineRating(r.user, r.item, r.rating, -999.0, -999.0)))
+      .leftOuterJoin(userAverageRating)
+      .map { case (u, (r, uAvg)) => (r.item, BaselineRating(u, r.item, r.rating, uAvg.getOrElse(globalAverageRating), -999.0))}
+      .leftOuterJoin(itemGlobalAverageDeviation)
+      .map { case (i, (b, iAvg)) => BaselineRating(b.user, i, b.rating, b.userAvg, iAvg.getOrElse(globalAverageRating))}
+      .map(b => scala.math.abs(b.rating - (b.userAvg + b.itemAvg * scale((b.userAvg + b.itemAvg), b.userAvg))))
+    
+    assert(baselineErrors.count() == test.count(), s"RDD sizes do not match when computing baseline MAE.")
+    
+    return baselineErrors.reduce(_ + _) / baselineErrors.count.toDouble
+  }
+
+  print("baselineMethod \t")
+  val baselineMae = spark.time(maeByBaseline(train, test))
+
+  // Q3.1.5
+  def mean(underlying : Vector[Double]) : Double = {
+    return underlying.reduce(_ + _) / underlying.size.toDouble
+  }
+  
+  def stdDev(underlying : Vector[Double]) : Double = {
+      return scala.math.sqrt(underlying
+        .map(_ - mean(underlying)).map(t => t * t)
+        .reduce(_ + _) / underlying.size.toDouble)
+  }
+
+  def calculateGlobalTime() : Double = {
+    val start = System.nanoTime()
+    val globalAverageRating = train.map(rating => rating.rating).mean
+    val globalMae = test
+      .map(r => scala.math.abs(r.rating - globalAverageRating))
+      .reduce(_ + _) / test.count.toDouble
+    return (System.nanoTime() - start) / 1e3d
+  }
+
+  def calculateTimePer(onKey : String) : Double = {
+    val start = System.nanoTime()
+    maeByAveragePer(train, test, onKey)
+    return (System.nanoTime() - start) / 1e3d
+  }
+
+  def calculateTimeBaseline() : Double = {
+    val start = System.nanoTime()
+    maeByBaseline(train, test)
+    return (System.nanoTime() - start) / 1e3d
+  }
+
+  val globalTime    = Range(0, 10, 1).map(_ => calculateGlobalTime()).toVector
+  val userTime      = Range(0, 10, 1).map(_ => calculateTimePer("user")).toVector
+  val itemTime      = Range(0, 10, 1).map(_ => calculateTimePer("item")).toVector
+  val baselineTime  = Range(0, 10, 1).map(_ => calculateTimeBaseline()).toVector
 
   // **************
 
@@ -127,37 +188,41 @@ object Predictor extends App {
               "MaeGlobalMethod" -> globalMae, // Datatype of answer: Double
               "MaePerUserMethod" -> perUserMae, // Datatype of answer: Double
               "MaePerItemMethod" -> perItemMae, // Datatype of answer: Double
-              "MaeBaselineMethod" -> 0.0 // Datatype of answer: Double
+              "MaeBaselineMethod" -> baselineMae // Datatype of answer: Double
             ),
 
             "Q3.1.5" -> Map(
               "DurationInMicrosecForGlobalMethod" -> Map(
-                "min" -> 0.0,  // Datatype of answer: Double
-                "max" -> 0.0,  // Datatype of answer: Double
-                "average" -> 0.0 // Datatype of answer: Double
+                "min" -> globalTime.min,  // Datatype of answer: Double
+                "max" -> globalTime.max,  // Datatype of answer: Double
+                "average" -> mean(globalTime), // Datatype of answer: Double
+                "stddev" -> stdDev(globalTime) // Datatype of answer: Double
               ),
               "DurationInMicrosecForPerUserMethod" -> Map(
-                "min" -> 0.0,  // Datatype of answer: Double
-                "max" -> 0.0,  // Datatype of answer: Double
-                "average" -> 0.0 // Datatype of answer: Double
+                "min" -> userTime.min,  // Datatype of answer: Double
+                "max" -> userTime.max,  // Datatype of answer: Double
+                "average" -> mean(userTime), // Datatype of answer: Double
+                "stddev" -> stdDev(userTime) // Datatype of answer: Double
               ),
               "DurationInMicrosecForPerItemMethod" -> Map(
-                "min" -> 0.0,  // Datatype of answer: Double
-                "max" -> 0.0,  // Datatype of answer: Double
-                "average" -> 0.0 // Datatype of answer: Double
+                "min" -> itemTime.min,  // Datatype of answer: Double
+                "max" -> itemTime.max,  // Datatype of answer: Double
+                "average" -> mean(itemTime), // Datatype of answer: Double
+                "stddev" -> stdDev(itemTime) // Datatype of answer: Double
               ),
               "DurationInMicrosecForBaselineMethod" -> Map(
-                "min" -> 0.0,  // Datatype of answer: Double
-                "max" -> 0.0, // Datatype of answer: Double
-                "average" -> 0.0 // Datatype of answer: Double
+                "min" -> baselineTime.min,  // Datatype of answer: Double
+                "max" -> baselineTime.max,  // Datatype of answer: Double
+                "average" -> mean(baselineTime), // Datatype of answer: Double
+                "stddev" -> stdDev(baselineTime) // Datatype of answer: Double
               ),
-              "RatioBetweenBaselineMethodAndGlobalMethod" -> 0.0 // Datatype of answer: Double
+              "RatioBetweenBaselineMethodAndGlobalMethod" -> mean(baselineTime) / mean(globalTime) // Datatype of answer: Double
             ),
          )
         json = Serialization.writePretty(answers)
       }
 
-      println(json)
+      // println(json)
       println("Saving answers in: " + jsonFile)
       printToFile(json, jsonFile)
     }

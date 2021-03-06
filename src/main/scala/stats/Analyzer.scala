@@ -41,41 +41,40 @@ object Analyzer extends App {
   //  MY CODE HERE
   // **************
 
-  // Q3.1
+  // Q3.1.1
   val globalAverageRating = data.map(rating => rating.rating).mean
 
-  // Q3.{2,3}
-  def averageRatingPer(data : RDD[Rating], onKey: String) : RDD[Tuple2[Int, Double]] = {
-    return onKey match {
-      case "user"  => data.map(r => (r.user, r.rating))
-                          .mapValues(r => (r, 1))
-                          .reduceByKey {
-                            case ((sumL, countL), (sumR, countR)) => (sumL + sumR, countL + countR)
-                          }
-                          .mapValues {
-                            case (sum, count) => 1.0 * sum / count
-                          }
-      case "item"  => data.map(r => (r.item, r.rating))
-                          .mapValues(r => (r, 1))
-                          .reduceByKey {
-                            case ((sumL, countL), (sumR, countR)) => (sumL + sumR, countL + countR)
-                          }
-                          .mapValues {
-                            case (sum, count) => 1.0 * sum / count
-                          }
-    }
+  // Q3.1.{2,3}
+
+  /**
+    * Computes the average rating per item or user.
+    *
+    * @param data the RDD containing Ratings.
+    * @param onKey the key to average on: one of {"user","item"}.
+    * 
+    * @return a RDD of (Int, Double) with the ID of {"user","item"} and the rating.
+    */
+  def averageRatingPer(data : RDD[Rating], onKey : String) : RDD[(Int, Double)] = {
+    return data.map(r => (if(onKey == "item") r.item else r.user, r.rating))
+      .aggregateByKey((0, 0))(
+        (k, v) => (k._1 + v.toInt, k._2 + 1),
+        (v1, v2) => (v1._1 + v2._1, v1._2 + v2._2))
+      .mapValues(sum => 1.0 * sum._1 / sum._2)
   }
   
+  // TODO: documentation
   def ratioOfRatingsCloseToGlobalAverageRating(ratings: RDD[Double], globalAverage: Double, threshold: Double = 0.5) : Double = {
     return 1.0 * ratings.filter(r => (r - globalAverage).abs < threshold).count / ratings.count
   }
 
+  // TODO: documentation
   def allRatingsCloseToGlobalAverageRating(ratings: RDD[Double], globalAverage: Double, threshold: Double = 0.5) : Boolean = {
     return (ratings.min > globalAverage - threshold) && (ratings.max < globalAverage + threshold)
   }
   
-  val usersAverageRating = averageRatingPer(data, "user").map(t => t._2)
-  val itemsAverageRating = averageRatingPer(data, "item").map(t => t._2)
+
+  val usersAverageRating = spark.time(averageRatingPer(data, "user").map(t => t._2))
+  val itemsAverageRating = spark.time(averageRatingPer(data, "item").map(t => t._2))
 
   // **************
 
