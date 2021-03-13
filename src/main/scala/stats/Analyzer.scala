@@ -1,5 +1,8 @@
 package stats
 
+import stats.RatingFunctions._
+import stats.PairRDDFunctions._
+
 import org.rogach.scallop._
 import org.json4s.jackson.Serialization
 import org.apache.spark.rdd.RDD
@@ -15,6 +18,43 @@ class Conf(arguments: Seq[String]) extends ScallopConf(arguments) {
 }
 
 case class Rating(user: Int, item: Int, rating: Double)
+
+// Extension of RDD[Rating] with custom operators
+class RatingFunctions(rdd : RDD[Rating]) {
+  
+  def averageRating = rdd.map(_.rating).mean
+
+  def toUserPair = rdd.map(r => (r.user, r.rating))
+  def toItemPair = rdd.map(r => (r.item, r.rating))
+
+}
+
+object RatingFunctions {
+  implicit def addRatingFunctions(rdd: RDD[Rating]) = new RatingFunctions(rdd) 
+}
+
+// Extension of RDD[(Int, Double)] with custom operators
+class PairRDDFunctions(rdd : RDD[(Int, Double)]) {
+
+  def values = rdd.map(_._2)
+
+  def averageByKey = rdd
+    .aggregateByKey((0.0, 0))(
+      (k, v) => (k._1 + v, k._2 + 1),
+      (v1, v2) => (v1._1 + v2._1, v1._2 + v2._2))
+    .mapValues(sum => 1.0 * sum._1 / sum._2.toDouble)
+
+  def ratioCloseTo(global : Double, threshold : Double = 0.5) = 
+    1.0 * rdd.values.filter(r => (r - global).abs < threshold).count / rdd.values.count
+
+  def allCloseTo(global: Double, threshold: Double = 0.5) =
+    (rdd.values.min > global - threshold) && (rdd.values.max < global + threshold)
+
+}
+
+object PairRDDFunctions {
+  implicit def addPairRDDFunctions(rdd: RDD[(Int, Double)]) = new PairRDDFunctions(rdd) 
+}
 
 object Analyzer extends App {
   // Remove these lines if encountering/debugging Spark
@@ -42,39 +82,11 @@ object Analyzer extends App {
   // **************
 
   // Q3.1.1
-  val globalAverageRating = data.map(rating => rating.rating).mean
+  val globalAverageRating = data.averageRating
 
-  // Q3.1.{2,3}
-
-  /**
-    * Computes the average rating per item or user.
-    *
-    * @param data the RDD containing Ratings.
-    * @param onKey the key to average on: one of {"user","item"}.
-    * 
-    * @return a RDD of (Int, Double) with the ID of {"user","item"} and the rating.
-    */
-  def averageRatingPer(data : RDD[Rating], onKey : String) : RDD[(Int, Double)] = {
-    return data.map(r => (if(onKey == "item") r.item else r.user, r.rating))
-      .aggregateByKey((0, 0))(
-        (k, v) => (k._1 + v.toInt, k._2 + 1),
-        (v1, v2) => (v1._1 + v2._1, v1._2 + v2._2))
-      .mapValues(sum => 1.0 * sum._1 / sum._2)
-  }
-  
-  // TODO: documentation
-  def ratioOfRatingsCloseToGlobalAverageRating(ratings: RDD[Double], globalAverage: Double, threshold: Double = 0.5) : Double = {
-    return 1.0 * ratings.filter(r => (r - globalAverage).abs < threshold).count / ratings.count
-  }
-
-  // TODO: documentation
-  def allRatingsCloseToGlobalAverageRating(ratings: RDD[Double], globalAverage: Double, threshold: Double = 0.5) : Boolean = {
-    return (ratings.min > globalAverage - threshold) && (ratings.max < globalAverage + threshold)
-  }
-  
-
-  val usersAverageRating = spark.time(averageRatingPer(data, "user").map(t => t._2))
-  val itemsAverageRating = spark.time(averageRatingPer(data, "item").map(t => t._2))
+  // Q3.1.{2,3}  
+  val usersAverageRating = data.toUserPair.averageByKey
+  val itemsAverageRating = data.toItemPair.averageByKey
 
   // **************
 
@@ -101,23 +113,23 @@ object Analyzer extends App {
             "UsersAverageRating" -> Map(
                 // Using as your input data the average rating for each user,
                 // report the min, max and average of the input data.
-                "min" -> usersAverageRating.min,  // Datatype of answer: Double
-                "max" -> usersAverageRating.max, // Datatype of answer: Double
-                "average" -> usersAverageRating.mean // Datatype of answer: Double
+                "min" -> usersAverageRating.values.min,  // Datatype of answer: Double
+                "max" -> usersAverageRating.values.max, // Datatype of answer: Double
+                "average" -> usersAverageRating.values.mean // Datatype of answer: Double
             ),
-            "AllUsersCloseToGlobalAverageRating" -> allRatingsCloseToGlobalAverageRating(usersAverageRating, globalAverageRating), // Datatype of answer: Boolean
-            "RatioUsersCloseToGlobalAverageRating" -> ratioOfRatingsCloseToGlobalAverageRating(usersAverageRating, globalAverageRating) // Datatype of answer: Double
+            "AllUsersCloseToGlobalAverageRating" -> usersAverageRating.allCloseTo(globalAverageRating), // Datatype of answer: Boolean
+            "RatioUsersCloseToGlobalAverageRating" -> usersAverageRating.ratioCloseTo(globalAverageRating) // Datatype of answer: Double
           ),
           "Q3.1.3" -> Map(
             "ItemsAverageRating" -> Map(
                 // Using as your input data the average rating for each item,
                 // report the min, max and average of the input data.
-                "min" -> itemsAverageRating.min,  // Datatype of answer: Double
-                "max" -> itemsAverageRating.max, // Datatype of answer: Double
-                "average" -> itemsAverageRating.mean // Datatype of answer: Double
+                "min" -> itemsAverageRating.values.min,  // Datatype of answer: Double
+                "max" -> itemsAverageRating.values.max, // Datatype of answer: Double
+                "average" -> itemsAverageRating.values.mean // Datatype of answer: Double
             ),
-            "AllItemsCloseToGlobalAverageRating" -> allRatingsCloseToGlobalAverageRating(itemsAverageRating, globalAverageRating), // Datatype of answer: Boolean
-            "RatioItemsCloseToGlobalAverageRating" -> ratioOfRatingsCloseToGlobalAverageRating(itemsAverageRating, globalAverageRating) // Datatype of answer: Double
+            "AllItemsCloseToGlobalAverageRating" -> itemsAverageRating.allCloseTo(globalAverageRating), // Datatype of answer: Boolean
+            "RatioItemsCloseToGlobalAverageRating" -> itemsAverageRating.ratioCloseTo(globalAverageRating) // Datatype of answer: Double
           ),
          )
         json = Serialization.writePretty(answers)
