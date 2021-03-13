@@ -243,16 +243,19 @@ object Predictor extends App {
     train.averageRating
   })).toVector
 
+  // Collect to force an action on the RDD without creating an
+  // additionnal data structure on the driver node.
+  // --> As mentioned in Moodle Forum "Runtime analysis" opened by Augustin Kapps
   val userTime      = (0 to 10).map(_ => FuncTimer.time(
-    predictionByUser(train, test.toUserItemPair).collect()
+    predictionByUser(train, test.toUserItemPair).map(_.rating).reduce(_ + _)
   )).toVector
 
   val itemTime      = (0 to 10).map(_ => FuncTimer.time(
-    predictionByItem(train, test.toUserItemPair).collect()
+    predictionByItem(train, test.toUserItemPair).map(_.rating).reduce(_ + _)
   )).toVector
 
   val baselineTime  = (0 to 10).map(_ => FuncTimer.time(
-    baselinePrediction(train, test.toUserItemPair).collect()
+    baselinePrediction(train, test.toUserItemPair).map(_.rating).reduce(_ + _)
   )).toVector
 
   // **************
