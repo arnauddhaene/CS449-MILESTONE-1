@@ -48,10 +48,6 @@ object Recommender extends App {
   assert(data.count == 100000, "Invalid data")
 
   // **************
-  //  MY CODE HERE
-  // **************
-
-  // Q4.1.1
 
   println("Loading personal data from: " + conf.personal()) 
   val personalFile = spark.sparkContext.textFile(conf.personal())
@@ -90,12 +86,11 @@ object Recommender extends App {
     
     val itemGlobalAverageDeviation = normalizedDeviations.toItemPair.averageByKey
 
-    val ratingsPerItem = train.toItemPair
-      .countByKey()
+    val ratingsPerItem = train.toItemPair.countByKey()
 
     val (min, max) = (ratingsPerItem.values.min, ratingsPerItem.values.max)
 
-    def popularityPenalty(noRatings : Long) = (1.0 / (1.0 + scala.math.exp(10.0 * ((noRatings - min) / (max - min).toDouble) - 1.0)))
+    def popularityPenalty(noRatings : Long) = (0.2 / (1.0 + scala.math.exp(10.0 * ((noRatings - min) / (max - min).toDouble) - 1.0)))
 
     // Verify that normalized deviations are within range and distinct for (user, item) pairs
     // assert(normalizedDeviations.filter(r => (r.rating > 1.0) || (r.rating < -1.0)).count == 0, 
@@ -123,6 +118,16 @@ object Recommender extends App {
 
   } 
 
+  /**
+    * Recommend movies for a specific user using a specific predictor.
+    *
+    * @param ratings RDD of item ratings by users
+    * @param userId
+    * @param n top rated predictions to output
+    * @param predictor function that uses train and test sets to predict ratings
+    * 
+    * @return list containing (item, rating) pairs for the user with ID userId
+    */
   def recommend(
     ratings : RDD[Rating],
     userId : Int,
@@ -148,18 +153,23 @@ object Recommender extends App {
     
   }
   
+  // Add my personal item ratings to RDD of item ratings by users
   val updatedRatings = data.union(personalRatings)
   
+  // Q4.1.1
   val recommendations = recommend(updatedRatings, 944, 5)
 
+  // Q4.1.2
   val recommendationsBonus = recommend(updatedRatings, 944, 5, bonusPrediction)
 
+  // Get movie names from `personal.csv` and store in hashmap
   val moviesFile = spark.sparkContext.textFile(conf.personal())
   val movies = moviesFile
     .map(_.split(",").map(_.trim))
     .map(cols => (cols(0).toInt, cols(1).toString))
     .collect.toMap
 
+  // Add movie name to recommendations
   def pretty(recommendations : List[(Int, Double)]) : List[Any] = 
     recommendations
       .map(mr => List(mr._1, movies(mr._1), mr._2))

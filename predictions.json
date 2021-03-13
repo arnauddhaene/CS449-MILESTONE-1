@@ -1,35 +1,35 @@
 {
   "Q3.1.4" : {
     "MaeGlobalMethod" : 0.9680487750000057,
-    "MaePerUserMethod" : 0.8501912740150407,
-    "MaePerItemMethod" : 0.8275684032889947,
+    "MaePerUserMethod" : 0.8501912740150506,
+    "MaePerItemMethod" : 0.8275684032890006,
     "MaeBaselineMethod" : 0.768055237211823
   },
   "Q3.1.5" : {
     "DurationInMicrosecForPerItemMethod" : {
-      "min" : 283498.764,
-      "max" : 919355.833,
-      "average" : 407795.9741818182,
-      "stddev" : 179744.56595068183
+      "min" : 64.615661,
+      "max" : 88.463222,
+      "average" : 72.24532509090909,
+      "stddev" : 6.155744958517642
     },
-    "RatioBetweenBaselineMethodAndGlobalMethod" : 16.700518233384887,
+    "RatioBetweenBaselineMethodAndGlobalMethod" : 1.1241619381066124,
     "DurationInMicrosecForGlobalMethod" : {
-      "min" : 84801.315,
-      "max" : 122379.498,
-      "average" : 97427.81327272728,
-      "stddev" : 13452.122099958424
+      "min" : 64.20647,
+      "max" : 172.918017,
+      "average" : 84.31995472727273,
+      "stddev" : 29.300652358429016
     },
     "DurationInMicrosecForPerUserMethod" : {
-      "min" : 348205.048,
-      "max" : 713184.832,
-      "average" : 487954.3780000001,
-      "stddev" : 124602.91368812606
+      "min" : 67.625345,
+      "max" : 92.038426,
+      "average" : 72.39711381818182,
+      "stddev" : 6.471978265291307
     },
     "DurationInMicrosecForBaselineMethod" : {
-      "min" : 1475911.657,
-      "max" : 2239238.12,
-      "average" : 1627094.972,
-      "stddev" : 246321.19900667272
+      "min" : 76.440198,
+      "max" : 121.110123,
+      "average" : 94.78928372727273,
+      "stddev" : 15.582719859131052
     }
   }
 }

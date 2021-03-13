@@ -24,6 +24,7 @@ class RatingFunctions(rdd : RDD[Rating]) {
   
   def averageRating = rdd.map(_.rating).mean
 
+  def toUserItemPair = rdd.map(r => (r.user, r.item))
   def toUserPair = rdd.map(r => (r.user, r.rating))
   def toItemPair = rdd.map(r => (r.item, r.rating))
 
@@ -77,8 +78,6 @@ object Analyzer extends App {
   }) 
   assert(data.count == 100000, "Invalid data")
 
-  // **************
-  //  MY CODE HERE
   // **************
 
   // Q3.1.1

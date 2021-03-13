@@ -8,6 +8,8 @@ import stats.PairRDDFunctions._
 
 import predict.VectorFunctions._
 
+import recommend.Recommender
+
 import org.rogach.scallop._
 import org.json4s.jackson.Serialization
 import org.apache.spark.rdd.RDD
@@ -46,7 +48,7 @@ object FuncTimer {
   def time(func : => Any) : Double = {
     val start = System.nanoTime()
     val perform = func
-    return (System.nanoTime() - start) / 1e3d
+    return (System.nanoTime() - start) / 1e6d
   }
 
 }
@@ -81,8 +83,6 @@ object Predictor extends App {
   assert(test.count == 20000, "Invalid test data")
   
   // **************
-  //  MY CODE HERE
-  // **************
 
   // Q3.1.4
   val globalAverageRating = train.averageRating
@@ -91,32 +91,54 @@ object Predictor extends App {
     .mean
   
   /**
-    * Computes the MAE (Mean Average Error) using the average prediction method.
+    * Computes the predictions on the test set using User Average.
     *
-    * @param train the RDD containing the training samples.
-    * @param test the RDD containing the testing samples.
+    * @param train the RDD containing the training Ratings
+    * @param test the RDD containing the test (user, item) pairs
     * 
-    * @return the MAE of the predictions on the test.
+    * @return predictions
     */
-  def maeByAverage(train : RDD[(Int, Double)], test : RDD[(Int, Double)]) : Double = {
+  def predictionByUser(train : RDD[Rating], test : RDD[(Int, Int)]) : RDD[Rating] = {
     // Fetch average ratings
-    val averageRating = train.averageByKey
+    val averageRatingByUser = train.toUserPair.averageByKey
 
     // Calculate global average rating
-    val globalAverageRating = train.values.mean
+    val globalAverageRating = train.averageRating
 
-    val mae = test
-      .leftOuterJoin(averageRating)
-      .map { case (k, (p, ua)) => scala.math.abs(p - ua.getOrElse(globalAverageRating)) }
+    val predictions = test
+      .leftOuterJoin(averageRatingByUser)
+      .map { case (u, (i, ua)) => Rating(u, i, ua.getOrElse(globalAverageRating)) }
 
-    // Verify that all test ratings were compared to our predictions before averaging
-    // assert(mae.count() == test.count(), "RDD sizes do not match when computing MAE by average.")
+    return predictions
 
-    return mae.mean
+  }
+
+  /**
+    * Computes the predictions on the test set using Item Average.
+    *
+    * @param train the RDD containing the training Ratings
+    * @param test the RDD containing the test (user, item) pairs
+    * 
+    * @return predictions
+    */
+  def predictionByItem(train : RDD[Rating], test : RDD[(Int, Int)]) : RDD[Rating] = {
+    // Fetch average ratings
+    val averageRatingByItem = train.toItemPair.averageByKey
+
+    // Calculate global average rating
+    val globalAverageRating = train.averageRating
+
+    val predictions = test
+      .map { case (u, i) => (i, u) } // Switch order of PairRDD
+      .leftOuterJoin(averageRatingByItem)
+      .map { case (i, (u, ia)) => Rating(u, i, ia.getOrElse(globalAverageRating)) }
+
+    return predictions
+
   }
   
-  val perUserMae = maeByAverage(train.toUserPair, test.toUserPair)
-  val perItemMae = maeByAverage(train.toItemPair, test.toItemPair)
+  val perUserMae = maeByPredictor(train, test, predictionByUser)
+  val perItemMae = maeByPredictor(train, test, predictionByItem)
 
   /**
     * Computes x scaled by the user average rating.
@@ -187,11 +209,17 @@ object Predictor extends App {
     *
     * @param train RDD
     * @param test RDD
-    * @return the MAE using the baseline method
+    * @param predictor function that uses train and test to predict ratings
+    * 
+    * @return the MAE using the selected predictor
     */
-  def maeByBaseline(train : RDD[Rating], test : RDD[Rating]) : Double = {
+  def maeByPredictor(
+    train : RDD[Rating],
+    test : RDD[Rating],
+    predictor : (RDD[Rating], RDD[(Int, Int)]) => RDD[Rating]
+  ) : Double = {
 
-    val predictionErrors = baselinePrediction(train, test.map(r => (r.user, r.item)))
+    val predictionErrors = predictor(train, test.map(r => (r.user, r.item)))
       .map(r => ((r.user, r.item), r.rating))
       .join(test.map(p => ((p.user, p.item), p.rating)))
       .map { case ((u, i), (r, p)) => scala.math.abs(p - r) }
@@ -204,26 +232,27 @@ object Predictor extends App {
 
   }
 
-  val baselineMae = maeByBaseline(train, test)
+  val bonusMae = maeByPredictor(train, test, Recommender.bonusPrediction)
+
+  println(s"MAE using the popularity penalization function from Q4.1.2: $bonusMae")
+
+  val baselineMae = maeByPredictor(train, test, baselinePrediction)
 
   // Q3.1.5
   val globalTime    = (0 to 10).map(_ => FuncTimer.time({
-    val globalAverageRating = train.map(rating => rating.rating).mean
-    val globalMae = test
-      .map(r => scala.math.abs(r.rating - globalAverageRating))
-      .mean
+    train.averageRating
   })).toVector
 
   val userTime      = (0 to 10).map(_ => FuncTimer.time(
-    maeByAverage(train.toUserPair, test.toUserPair)
+    predictionByUser(train, test.toUserItemPair)
   )).toVector
 
   val itemTime      = (0 to 10).map(_ => FuncTimer.time(
-    maeByAverage(train.toItemPair, test.toItemPair)
+    predictionByItem(train, test.toUserItemPair)
   )).toVector
 
   val baselineTime  = (0 to 10).map(_ => FuncTimer.time(
-    maeByBaseline(train, test)
+    baselinePrediction(train, test.toUserItemPair)
   )).toVector
 
   // **************
