@@ -68,7 +68,67 @@ object Recommender extends App {
 
   assert(personalFile.count == 1682, "Invalid personal data")
 
-  def recommend(ratings : RDD[Rating], userId : Int, n : Int) : List[(Int, Double)] = {
+  /**
+    * Compute rating prediction using the baseline method.
+    *
+    * @param train RDD
+    * @param test RDD
+    * 
+    * @return RDD[Rating] with the predicted rating for each (user, item) pair
+    */
+  def bonusPrediction(train : RDD[Rating], test : RDD[(Int, Int)]) : RDD[Rating] = {
+
+    // Calculate global average rating
+    val globalAvg = train.averageRating
+
+    val userAverageRating = train.toUserPair.averageByKey
+    
+    val normalizedDeviations = train
+      .map(r => (r.user, (r.item, r.rating)))
+      .join(userAverageRating)
+      .map { case (u, ((i, r), ua)) => Rating(u, i, 1.0 * (r - ua) / Predictor.scale(r, ua).toDouble) }    
+    
+    val itemGlobalAverageDeviation = normalizedDeviations.toItemPair.averageByKey
+
+    val ratingsPerItem = train.toItemPair
+      .countByKey()
+
+    val (min, max) = (ratingsPerItem.values.min, ratingsPerItem.values.max)
+
+    def popularityPenalty(noRatings : Long) = (1.0 / (1.0 + scala.math.exp(10.0 * ((noRatings - min) / (max - min).toDouble) - 1.0)))
+
+    // Verify that normalized deviations are within range and distinct for (user, item) pairs
+    // assert(normalizedDeviations.filter(r => (r.rating > 1.0) || (r.rating < -1.0)).count == 0, 
+    //        "Normalization not within range.")
+    // assert(normalizedDeviations.map(r => (r.user, r.item)).distinct.count == train.count,
+    //        "Non unique pairs of (user, item).")
+
+    val predictions = test
+      .join(userAverageRating)
+      .map { case (u, (i, ua)) => (i, (ua, u)) }
+      .leftOuterJoin(itemGlobalAverageDeviation)
+      .map { case (i, ((ua, u), ia)) =>
+        ia match {
+          case None => Rating(u, i, globalAvg)
+          case Some(ia) => 
+            Rating(u, i, (ua + ia * Predictor.scale((ua + ia), ua)) - popularityPenalty(ratingsPerItem(i)))
+        }
+      }
+
+    // Verify that all predictions are in the range [1.0, 5.0]
+    // assert(predictions.filter(p => (p.rating < 1.0) || (p.rating > 5.0)).count == 0,
+    //        "Some predictions are out of bounds")
+
+    return predictions
+
+  } 
+
+  def recommend(
+    ratings : RDD[Rating],
+    userId : Int,
+    n : Int,
+    predictor : (RDD[Rating], RDD[(Int, Int)]) => RDD[Rating] = Predictor.baselinePrediction
+  ) : List[(Int, Double)] = {
     
     val ratedItems = ratings.filter(_.user == userId).map(_.item).collect()
     
@@ -78,8 +138,7 @@ object Recommender extends App {
       .filter(!ratedItems.contains(_))
       .map(i => (userId, i))
     
-    val predictions = Predictor.baselinePrediction(ratings, test)
-      .filter(_.user == userId)
+    val predictions = predictor(ratings, test).filter(_.user == userId)
     
     // Sort by item first to have ascending movie IDs for equally rated predictions
     return predictions
@@ -93,15 +152,18 @@ object Recommender extends App {
   
   val recommendations = recommend(updatedRatings, 944, 5)
 
+  val recommendationsBonus = recommend(updatedRatings, 944, 5, bonusPrediction)
+
   val moviesFile = spark.sparkContext.textFile(conf.personal())
   val movies = moviesFile
     .map(_.split(",").map(_.trim))
     .map(cols => (cols(0).toInt, cols(1).toString))
     .collect.toMap
 
-  val prettyRecommendations = recommendations
-    .map(mr => List(mr._1, movies(mr._1), mr._2))
-    .toList
+  def pretty(recommendations : List[(Int, Double)]) : List[Any] = 
+    recommendations
+      .map(mr => List(mr._1, movies(mr._1), mr._2))
+      .toList
 
   // Save answers as JSON
   def printToFile(content: String, 
@@ -123,7 +185,8 @@ object Recommender extends App {
             // IMPORTANT: To break ties and ensure reproducibility of results,
             // please report the top-5 recommendations that have the smallest
             // movie identifier.
-            "Q4.1.1" -> prettyRecommendations
+            "Q4.1.1" -> pretty(recommendations),
+            "Q4.1.2" -> pretty(recommendationsBonus)
          )
         json = Serialization.writePretty(answers)
       }
