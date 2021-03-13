@@ -244,15 +244,15 @@ object Predictor extends App {
   })).toVector
 
   val userTime      = (0 to 10).map(_ => FuncTimer.time(
-    predictionByUser(train, test.toUserItemPair)
+    predictionByUser(train, test.toUserItemPair).collect()
   )).toVector
 
   val itemTime      = (0 to 10).map(_ => FuncTimer.time(
-    predictionByItem(train, test.toUserItemPair)
+    predictionByItem(train, test.toUserItemPair).collect()
   )).toVector
 
   val baselineTime  = (0 to 10).map(_ => FuncTimer.time(
-    baselinePrediction(train, test.toUserItemPair)
+    baselinePrediction(train, test.toUserItemPair).collect()
   )).toVector
 
   // **************

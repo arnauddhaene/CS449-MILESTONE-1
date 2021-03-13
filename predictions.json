@@ -7,29 +7,29 @@
   },
   "Q3.1.5" : {
     "DurationInMicrosecForPerItemMethod" : {
-      "min" : 64.615661,
-      "max" : 88.463222,
-      "average" : 72.24532509090909,
-      "stddev" : 6.155744958517642
+      "min" : 338.550721,
+      "max" : 433.410937,
+      "average" : 369.269741,
+      "stddev" : 29.600843558919465
     },
-    "RatioBetweenBaselineMethodAndGlobalMethod" : 1.1241619381066124,
+    "RatioBetweenBaselineMethodAndGlobalMethod" : 21.0680123620164,
     "DurationInMicrosecForGlobalMethod" : {
-      "min" : 64.20647,
-      "max" : 172.918017,
-      "average" : 84.31995472727273,
-      "stddev" : 29.300652358429016
+      "min" : 59.002103,
+      "max" : 133.840394,
+      "average" : 70.13121845454545,
+      "stddev" : 20.415546114971136
     },
     "DurationInMicrosecForPerUserMethod" : {
-      "min" : 67.625345,
-      "max" : 92.038426,
-      "average" : 72.39711381818182,
-      "stddev" : 6.471978265291307
+      "min" : 390.378555,
+      "max" : 508.95199,
+      "average" : 425.8486762727273,
+      "stddev" : 33.9893949126048
     },
     "DurationInMicrosecForBaselineMethod" : {
-      "min" : 76.440198,
-      "max" : 121.110123,
-      "average" : 94.78928372727273,
-      "stddev" : 15.582719859131052
+      "min" : 1456.877239,
+      "max" : 1508.40108,
+      "average" : 1477.5253773636362,
+      "stddev" : 16.462688013817832
     }
   }
 }
