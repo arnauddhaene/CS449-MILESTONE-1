@@ -48,7 +48,7 @@ object FuncTimer {
   def time(func : => Any) : Double = {
     val start = System.nanoTime()
     val perform = func
-    return (System.nanoTime() - start) / 1e6d
+    return (System.nanoTime() - start) / 1e3d
   }
 
 }
